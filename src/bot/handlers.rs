@@ -1,5 +1,4 @@
-use super::TokenApiClientKey;
-use crate::api::traits::TokenApiClient;
+use crate::api::jupiter_api_client::JupiterApiClient;
 use crate::db::database::Database;
 use crate::utils::{
     message_parser::{extract_sol_token_address, extract_token_symbol},
@@ -44,8 +43,8 @@ impl EventHandler for Handler {
             extract_token_symbol(msg_content).or_else(|| extract_sol_token_address(msg_content))
         {
             let data = ctx.data.read().await;
-            let token_api_client: Arc<dyn TokenApiClient> = Arc::clone(
-                data.get::<TokenApiClientKey>()
+            let token_api_client: Arc<JupiterApiClient> = Arc::clone(
+                data.get::<JupiterApiClient>()
                     .expect("Expected Jupiter Api Client in TypeMap"),
             );
             let database = Arc::clone(
@@ -100,6 +99,5 @@ impl EventHandler for Handler {
 
     async fn ready(&self, _ctx: Context, _data_about_bot: Ready) {
         info!("Discord Bot is ready");
-        //TODO ADD INVITE LINK TO LOGS
     }
 }

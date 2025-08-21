@@ -1,6 +1,5 @@
-use super::{models::TokenInfo, traits::TokenApiClient};
+use super::models::TokenInfo;
 use anyhow::Error;
-use async_trait::async_trait;
 use reqwest::{Client, Method};
 use serde_json::from_str;
 
@@ -9,9 +8,15 @@ pub struct JupiterApiClient {
     base_url: String,
 }
 
-#[async_trait]
-impl TokenApiClient for JupiterApiClient {
-    async fn fetch_token_info(&self, token_mint: String) -> Result<Option<TokenInfo>, Error> {
+impl JupiterApiClient {
+    pub fn new() -> Self {
+        Self {
+            client: Client::new(),
+            base_url: String::from("https://lite-api.jup.ag/tokens/v2"),
+        }
+    }
+
+    pub async fn fetch_token_info(&self, token_mint: String) -> Result<Option<TokenInfo>, Error> {
         let url = format!("{}/search?query={}", &self.base_url, token_mint);
 
         let response = self.client.request(Method::GET, url).send().await?;
@@ -25,14 +30,5 @@ impl TokenApiClient for JupiterApiClient {
         }
 
         Ok(Some(token_info.first().cloned().unwrap()))
-    }
-}
-
-impl JupiterApiClient {
-    pub fn new() -> Self {
-        Self {
-            client: Client::new(),
-            base_url: String::from("https://lite-api.jup.ag/tokens/v2"),
-        }
     }
 }

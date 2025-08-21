@@ -1,5 +1,5 @@
 use crate::{
-    api::{jupiter_api_client::JupiterApiClient, traits::TokenApiClient},
+    api::jupiter_api_client::JupiterApiClient,
     db::database::Database,
 };
 use anyhow::Result;
@@ -46,11 +46,11 @@ pub async fn run(token: String) -> Result<(), anyhow::Error> {
         "postgresql://postgres:CyfQRh0SGG5g4@localhost/TokenScansDB".to_string(),
     )?);
 
-    let token_api_client: Arc<dyn TokenApiClient> = Arc::new(JupiterApiClient::new());
+    let jupiter_api_client: Arc<JupiterApiClient> = Arc::new(JupiterApiClient::new());
 
     {
         let mut data = client.data.write().await;
-        data.insert::<TokenApiClientKey>(token_api_client);
+        data.insert::<JupiterApiClient>(jupiter_api_client);
         data.insert::<Database>(database);
     }
 
@@ -59,10 +59,9 @@ pub async fn run(token: String) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-struct TokenApiClientKey {}
 
-impl TypeMapKey for TokenApiClientKey {
-    type Value = Arc<dyn TokenApiClient>;
+impl TypeMapKey for JupiterApiClient {
+    type Value = Arc<JupiterApiClient>;
 }
 
 impl TypeMapKey for Database {
