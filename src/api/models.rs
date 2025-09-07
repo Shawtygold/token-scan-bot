@@ -1,51 +1,53 @@
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use validator::Validate;
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct TokenInfo {
-    pub id: String,
+#[derive(Debug, Clone, Validate)]
+pub struct SolTokenInfo {
+    #[validate(length(min = 32, max = 44))]
+    pub mint: String,
+    #[validate(length(min = 1))]
     pub name: String,
+    #[validate(length(min = 1))]
     pub symbol: String,
-    pub twitter: Option<String>,
-    pub telegram: Option<String>,
-    pub website: Option<String>,
+    #[validate(url)]
+    pub logo: String,
+    pub links: TokenLinks,
     pub dev: Option<String>,
-    #[serde(rename = "circSupply")]
-    pub circ_supply: Option<f64>,
-    #[serde(rename = "totalSupply")]
-    pub total_supply: Option<f64>,
     pub launchpad: Option<String>,
-    #[serde(rename = "holderCount")]
-    pub holder_count: Option<usize>,
-    pub fdv: Option<f64>,
-    pub mcap: Option<f64>,
-    #[serde(rename = "usdPrice")]
-    pub usd_price: Option<f64>,
-    pub liquidity: Option<f64>,
-    pub stats1h: Option<Stats>,
-    #[serde(rename = "firstPool")]
-    pub first_pool: Option<FirstPool>,
+    pub token_pair_exchange_name: String,
+    pub holder_count: u32,
+    #[validate(range(min = 0.0))]
+    pub fully_diluted_value: f64,
+    #[validate(range(min = 0.0))]
+    pub usd_price: f64,
+    #[validate(range(min = 0.0))]
+    pub liquidity_usd: f64,
+    pub stats_1h: TokenStats1H,
+    pub stats_24h: TokenStats24H,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-pub struct Stats {
-    #[serde(rename = "priceChange")]
-    pub price_change: Option<f64>,
-    #[serde(rename = "volumeChange")]
-    pub volume_change: Option<f64>,
-    #[serde(rename = "buyVolume")]
-    pub buy_volume: Option<f64>,
-    #[serde(rename = "sellVolume")]
-    pub sell_volume: Option<f64>,
-    #[serde(rename = "numBuys")]
-    pub num_buys: Option<i64>,
-    #[serde(rename = "numSells")]
-    pub num_sells: Option<i64>,
+#[derive(Debug, Clone)]
+pub struct TokenLinks {
+    pub discord: Option<String>,
+    pub telegram: Option<String>,
+    pub reddit: Option<String>,
+    pub twitter: Option<String>,
+    pub website: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-pub struct FirstPool {
-    pub id: String,
-    #[serde(rename = "createdAt")]
-    pub created_at: DateTime<Utc>,
+#[derive(Debug, Clone, Validate)]
+pub struct TokenStats1H {
+    pub buys: u32,
+    pub sells: u32,
+    #[validate(range(min = 0.0))]
+    pub buy_volume: f64,
+    #[validate(range(min = 0.0))]
+    pub sell_volume: f64,
+    #[validate(range(min = 0.0))]
+    pub price_percent_change: f64,
+}
+
+#[derive(Debug, Clone, Validate)]
+pub struct TokenStats24H {
+    #[validate(range(min = 0.0))]
+    pub price_percent_change: f64,
 }
