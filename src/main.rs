@@ -8,19 +8,26 @@ mod api;
 mod bot;
 mod db;
 mod utils;
+mod errors;
 
 struct Config {
-    token: String,
+    discord_token: String,
+    moralis_api_key: String,
 }
 
 impl Config {
     async fn load() -> Result<Self, Error> {
         dotenv().ok();
 
-        let token = env::var("DISCORD_TOKEN")
+        let discord_token = env::var("DISCORD_TOKEN")
             .expect("Missing `DISCORD_TOKEN` env var, see README for more information.");
 
-        Ok(Self { token })
+        let moralis_api_key = env::var("MORALIS_API_KEY").expect("Missing Moralis Api Key");
+
+        Ok(Self {
+            discord_token,
+            moralis_api_key,
+        })
     }
 }
 
@@ -34,7 +41,7 @@ async fn main() -> Result<(), Error> {
     let cfg = Config::load().await?;
 
     info!("Running discord bot");
-    bot::run(cfg.token).await?;
+    bot::run(cfg.discord_token, cfg.moralis_api_key).await?;
 
     Ok(())
 }
