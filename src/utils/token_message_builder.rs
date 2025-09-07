@@ -1,39 +1,28 @@
-use crate::api::{
-    errors::ApiErrors,
-    models::{Stats, TokenInfo},
-};
-use crate::db::{
-    database::Database,
-    models::{Guild, NewTokenScan, Token, User as DbUser},
-};
+use crate::api::models::{SolTokenInfo, TokenLinks, TokenStats1H};
+use crate::db::models::ScanType;
 use anyhow::Error;
 use chrono::{DateTime, Utc};
-use serenity::all::{Color, CreateEmbed, CreateEmbedFooter, CreateMessage, User, UserId};
-use serenity::http;
+use serenity::{
+    all::{Color, CreateEmbed, CreateEmbedFooter, CreateMessage, User, UserId},
+    http,
+};
 use std::sync::Arc;
 
 pub struct TokenMessageBuilder {
     pub http: Arc<http::Http>,
-    pub token_info: TokenInfo,
-    pub database: Arc<Database>,
+    pub token_info: SolTokenInfo,
 }
 
 impl TokenMessageBuilder {
-    pub fn new(http: Arc<http::Http>, token_info: TokenInfo, database: Arc<Database>) -> Self {
-        Self {
-            http,
-            token_info,
-            database,
-        }
+    pub fn new(http: Arc<http::Http>, token_info: SolTokenInfo) -> Self {
+        Self { http, token_info }
     }
 
-    pub async fn build(&self, guild_id: u64, author: &User) -> Result<CreateMessage, Error> {
-        let content = format!(
-            "**{}** - **${}**",
-            self.token_info.name, self.token_info.symbol
-        );
-        let description = Self::build_description(self)?;
-        let footer = Self::build_footer(self, guild_id, author).await?;
+    pub async fn build(&self, author: &User, scan_type: ScanType) -> Result<CreateMessage, Error> {
+        let content = self.build_content();
+        let description = self.build_description()?;
+        let footer = self.build_footer(author, scan_type).await?;
+
         let embed = CreateEmbed::new()
             .color(Color::BLURPLE)
             .description(description)
@@ -42,151 +31,114 @@ impl TokenMessageBuilder {
         Ok(CreateMessage::new().content(content).add_embed(embed))
     }
 
+    fn build_content(&self) -> String {
+        let launchpad_icon: Option<&str> = if let Some(launchpad) = &self.token_info.launchpad {
+            match launchpad.to_lowercase() {
+                l if l.contains("pump") => Some("💊"),
+                l if l.contains("bonk") => Some("🐶"),
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        let mut content = format!(
+            "**{} [{}/{:.1}%] - ${}**",
+            self.token_info.name,
+            Self::to_short_scale(self.token_info.fully_diluted_value),
+            self.token_info.stats_24h.price_percent_change,
+            self.token_info.symbol
+        );
+
+        if let Some(icon) = launchpad_icon {
+            content.insert_str(0, &format!("{} ", icon));
+        }
+
+        content
+    }
+
     fn build_description(&self) -> Result<String, Error> {
         let mut embed_fields: Vec<String> = vec![];
 
-        if let Some(launchpad) = self.token_info.launchpad.clone().as_mut() {
-            embed_fields.push(match launchpad {
-                launch if launch.as_str() == "pump.fun" => String::from("💊 Solana @ PumpFun"),
-                launch if launch.as_str() == "letsbonk.fun" => String::from("🐶 Solana @ LetsBonk"),
-                _ => format!("🌐 Solana @ {}", launchpad),
-            });
-        }
+        let mint = &self.token_info.mint;
+        let token_links = &self.token_info.links;
+        let dev_address = self.token_info.dev.as_ref();
+        let holder_count = self.token_info.holder_count;
+        let fdv = self.token_info.fully_diluted_value;
+        let usd_price = self.token_info.usd_price;
+        let liquidity_usd = self.token_info.liquidity_usd;
+        let token_stats_1h = &self.token_info.stats_1h;
+        let exchange_name = &self.token_info.token_pair_exchange_name;
 
-        let usd_price = self
-            .token_info
-            .usd_price
-            .ok_or(ApiErrors::MissingData(String::from("\"Usd Price\"")))?;
-
-        let fdv = self
-            .token_info
-            .fdv
-            .ok_or(ApiErrors::MissingData(String::from("\"FDV\"")))?;
-
-        let liquidity = self
-            .token_info
-            .liquidity
-            .ok_or(ApiErrors::MissingData(String::from("\"Liquidity\"")))?;
-
-        let first_pool = self
-            .token_info
-            .first_pool
-            .as_ref()
-            .ok_or(ApiErrors::MissingData(String::from("\"First Pool\"")))?;
-
-        let token_age = Self::format_duration(&first_pool.created_at);
-
+        embed_fields.push(format!("🌐 Solana @ {}", exchange_name));
         embed_fields.push(format!("💰 USD: `${}`", Self::format_price(usd_price)));
         embed_fields.push(format!("💎 FDV: `${}`", Self::to_short_scale(fdv)));
-        embed_fields.push(format!("💦 Liq: `${}`", Self::to_short_scale(liquidity)));
-        embed_fields.push(format!("🕰️ Age: `{}`", token_age));
+        embed_fields.push(format!(
+            "💦 Liq: `${}`",
+            Self::to_short_scale(liquidity_usd)
+        ));
+        // embed_fields.push(format!("🕰️ Age: `{}`", token_age));
+        embed_fields.push(Self::format_hourly_stats(token_stats_1h));
+        embed_fields.push(String::from(""));
+        embed_fields.push(format!(
+            "🤝 Total: `{}`",
+            Self::to_short_scale(holder_count as f64)
+        ));
 
-        if let Some(stats) = self.token_info.stats1h.as_ref() {
-            if let Some(stats1h) = Self::format_hourly_stats(stats) {
-                embed_fields.push(stats1h);
-            }
-        }
-
-        if let Some(socials_str) = Self::format_socials(
-            self.token_info.twitter.as_ref(),
-            self.token_info.telegram.as_ref(),
-            self.token_info.website.as_ref(),
-            self.token_info.dev.as_ref(),
-        ) {
-            embed_fields.push(format!("💼 Socials: {}", socials_str));
+        if let Some(socials) = Self::format_socials(token_links, dev_address) {
+            embed_fields.push(format!("💼 Socials: {}", socials));
         }
 
         embed_fields.push(format!(
-            "💹 Chart: [Dex](https://dexscreener.com/solana/{}) ⋅ [DEF](https://www.defined.fi/sol/{})",
-            self.token_info.id, self.token_info.id
+            "💹 Chart: [DEX](https://dexscreener.com/solana/{}) ⋅ [DEF](https://www.defined.fi/sol/{})",
+            mint, mint
         ));
 
         let mut description = embed_fields.join("\n");
-        description.push_str(format!("\n\n`{}`", self.token_info.id).as_str());
+        description.push_str(format!("\n\n`{}`", mint).as_str());
 
         Ok(description)
     }
 
-    async fn build_footer(&self, guild_id: u64, author: &User) -> Result<CreateEmbedFooter, Error> {
-        let token_scan_opt = self
-            .database
-            .get_token_scan(self.token_info.id.as_ref(), guild_id)
-            .await?;
-
-        let footer = match token_scan_opt {
-            Some(token_scan) => {
-                let user = self.http.get_user(UserId::from(token_scan.user_id)).await?;
-
-                let mut footer = CreateEmbedFooter::new(format!(
-                    "{} 🏆 {} @ {} ⋅ {}",
-                    author.name,
-                    user.name,
-                    Self::to_short_scale(token_scan.fdv),
-                    Self::format_duration(&token_scan.scanned_at)
-                ));
-
-                if let Some(icon_url) = user.avatar_url() {
-                    footer = footer.icon_url(icon_url);
-                }
-
-                footer
-            }
-            None => {
-                let guild = Guild { guild_id };
-
-                let user = DbUser {
-                    user_id: u64::from(author.id),
-                };
-
-                let token = Token {
-                    token_id: self.token_info.id.clone(),
-                    name: self.token_info.name.clone(),
-                    symbol: self.token_info.symbol.clone(),
-                };
-
-                let token_scan = NewTokenScan {
-                    user_id: user.user_id,
-                    guild_id: guild.guild_id,
-                    token_id: token.token_id.clone(),
-                    fdv: self
-                        .token_info
-                        .fdv
-                        .ok_or(ApiErrors::MissingData(String::from("\"FDV\"")))?,
-                };
-
-                self.database
-                    .insert_token_scan(&guild, &user, &token, &token_scan)
-                    .await?;
-
-                let mut footer = CreateEmbedFooter::new(format!(
-                    "{} 💨 You are first! @ {}",
-                    author.name,
-                    Self::to_short_scale(token_scan.fdv)
-                ));
-
-                if let Some(icon_url) = author.avatar_url() {
-                    footer = footer.icon_url(icon_url);
-                }
-
-                footer
-            }
+    async fn build_footer(
+        &self,
+        author: &User,
+        scan_type: ScanType,
+    ) -> Result<CreateEmbedFooter, Error> {
+        let mut footer = match scan_type {
+            ScanType::FirstScan(token_scan) => CreateEmbedFooter::new(format!(
+                "{} 💨 You are first! @ {}",
+                author.display_name(),
+                Self::to_short_scale(token_scan.fdv)
+            )),
+            ScanType::Scanned(token_scan) => CreateEmbedFooter::new(format!(
+                "{} 🏆 {} @ {} ⋅ {}",
+                author.display_name(),
+                self.http.get_user(UserId::from(token_scan.user_id)).await?.display_name(),
+                Self::to_short_scale(token_scan.fdv),
+                Self::format_duration(&token_scan.scanned_at)
+            )),
         };
+
+        if let Some(avatar_url) = author.avatar_url() {
+            footer = footer.icon_url(avatar_url);
+        }
 
         Ok(footer)
     }
 
-    fn format_hourly_stats(stats: &Stats) -> Option<String> {
-        let price_change = stats.price_change.unwrap_or_default();
-        let buy_volume = stats.buy_volume.unwrap_or_default();
-        let sell_volume = stats.sell_volume.unwrap_or_default();
+    fn format_hourly_stats(pair_stats_1h: &TokenStats1H) -> String {
+        let price_change = pair_stats_1h.price_percent_change;
+        let buy_volume = pair_stats_1h.buy_volume;
+        let sell_volume = pair_stats_1h.sell_volume;
         let volume = Self::to_short_scale(buy_volume + sell_volume);
-        let num_buys = stats.num_buys.unwrap_or_default();
-        let num_sells = stats.num_sells.unwrap_or_default();
+        let buys = pair_stats_1h.buys;
+        let sells = pair_stats_1h.sells;
 
-        Some(format!(
+        format!(
             "📈 1H: `{:.1}%` ⋅ `${}` 🅑 `{}` Ⓢ `{}`",
-            price_change, volume, num_buys, num_sells
-        ))
+            price_change, volume, buys, sells
+        )
     }
 
     fn format_price(price: f64) -> String {
@@ -205,8 +157,8 @@ impl TokenMessageBuilder {
     fn to_short_scale(num: f64) -> String {
         match num {
             n if n > 1000000000.0 => format!("{:.1}B", n / 1000000000.0),
-            n if n > 1000000.0 => format!("{:.2}M", n / 1000000.0),
-            n if n > 1000.0 => format!("{:.2}K", n / 1000.0),
+            n if n > 1000000.0 => format!("{:.1}M", n / 1000000.0),
+            n if n > 1000.0 => format!("{:.1}K", n / 1000.0),
             _ => format!("{:.0}", num),
         }
     }
@@ -224,27 +176,30 @@ impl TokenMessageBuilder {
         }
     }
 
-    fn format_socials(
-        twitter: Option<&String>,
-        telegram: Option<&String>,
-        website: Option<&String>,
-        dev: Option<&String>,
-    ) -> Option<String> {
+    fn format_socials(token_links: &TokenLinks, dev_address: Option<&String>) -> Option<String> {
         let mut links: Vec<String> = vec![];
 
-        if let Some(twt) = twitter {
-            links.push(format!("[𝕏]({})", twt));
+        if let Some(twitter) = &token_links.twitter {
+            links.push(format!("[𝕏]({})", twitter));
         }
 
-        if let Some(tg) = telegram {
-            links.push(format!("[Tg]({})", tg));
+        if let Some(discord) = &token_links.discord {
+            links.push(format!("[𝕏]({})", discord));
         }
 
-        if let Some(web) = website {
-            links.push(format!("[Web]({})", web));
+        if let Some(reddit) = &token_links.reddit {
+            links.push(format!("[𝕏]({})", reddit));
         }
 
-        if let Some(dev_wallet) = dev {
+        if let Some(telegram) = &token_links.telegram {
+            links.push(format!("[Tg]({})", telegram));
+        }
+
+        if let Some(website) = &token_links.website {
+            links.push(format!("[Web]({})", website));
+        }
+
+        if let Some(dev_wallet) = dev_address {
             links.push(format!("[Dev](https://solscan.io/account/{})", dev_wallet));
         }
 
